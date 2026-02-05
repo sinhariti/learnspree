@@ -1,0 +1,66 @@
+### Global variables
+@baseUrl = http://localhost:5001/api
+@studentId = demo_student
+
+### 1. Start Marathon
+POST {{baseUrl}}/start-marathon
+Content-Type: application/json
+
+{
+  "examName": "GATE CS 2025",
+  "totalDays": 14,
+  "hoursPerDay": 3,
+  "syllabus": ["Operating Systems", "DBMS", "Algorithms", "Computer Networks"]
+}
+
+### 2. Get Today's Plan
+GET {{baseUrl}}/today?studentId={{studentId}}
+
+### 3. Generate Quiz
+GET {{baseUrl}}/quiz/Operating%20Systems?difficulty=medium&questions=3
+
+### 4. Submit Quiz
+# Note: Use IDs from the generated quiz in step 3
+POST {{baseUrl}}/submit-quiz
+Content-Type: application/json
+
+{
+  "studentId": "{{studentId}}",
+  "day": 1,
+  "topic": "Operating Systems",
+  "quizData": {
+    "questions": [
+      { "id": 1, "correctAnswer": "A" },
+      { "id": 2, "correctAnswer": "B" },
+      { "id": 3, "correctAnswer": "C" }
+    ]
+  },
+  "userAnswers": {
+    "1": "B",
+    "2": "A",
+    "3": "C"
+  },
+  "timeSpent": 20
+}
+
+### 5. Get Performance
+GET {{baseUrl}}/performance?studentId={{studentId}}&days=3
+
+### 6. Reflect and Reschedule
+POST {{baseUrl}}/reflect
+Content-Type: application/json
+
+{
+  "studentId": "{{studentId}}"
+}
+
+### 7. Fast Forward (Demo Only)
+POST {{baseUrl}}/fast-forward
+Content-Type: application/json
+
+{
+  "studentId": "{{studentId}}"
+}
+
+### 8. Get Full Schedule
+GET {{baseUrl}}/schedule?studentId={{studentId}}&from=1&to=14
