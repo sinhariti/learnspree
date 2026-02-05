@@ -51,7 +51,7 @@ GEMINI_MODEL_STANDARD=gemini-1.5-pro
 | `MONGODB_URI`        | ✅       | MongoDB connection string                 |
 | `PORT`               | ❌       | Server port (default: 5000)               |
 | `DAILY_CRON_SCHEDULE`| ❌       | Cron for auto-checks (default: 6 AM daily)|
-
+```
 ---
 
 ## 📡 API Routes
