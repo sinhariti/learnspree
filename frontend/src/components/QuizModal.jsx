@@ -2,6 +2,21 @@ import React, { useState, useEffect } from 'react';
 
 const API_BASE = 'http://localhost:5001/api';
 
+// Helper function to clean markdown formatting from text
+const cleanMarkdown = (text) => {
+  if (!text) return '';
+  return text
+    .replace(/\*\*(.+?)\*\*/g, '$1')  // Remove bold **text**
+    .replace(/\*(.+?)\*/g, '$1')      // Remove italic *text*
+    .replace(/__(.+?)__/g, '$1')      // Remove bold __text__
+    .replace(/_(.+?)_/g, '$1')        // Remove italic _text_
+    .replace(/`(.+?)`/g, '$1')        // Remove inline code `text`
+    .replace(/^#+\s*/gm, '')          // Remove headers
+    .replace(/^[-*]\s+/gm, '')        // Remove list markers
+    .replace(/\[(.+?)\]\(.+?\)/g, '$1') // Remove links, keep text
+    .trim();
+};
+
 function QuizModal({ topic, onClose, onComplete }) {
   const [quiz, setQuiz] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -23,7 +38,16 @@ function QuizModal({ topic, onClose, onComplete }) {
         `${API_BASE}/quiz/${encodedTopic}?difficulty=medium&questions=5`
       );
       const data = await response.json();
-      setQuiz(data.quiz);
+
+      // Backend returns quiz object directly (not nested under 'quiz' property)
+      // Handle both formats for backward compatibility
+      const quizData = data.quiz || data;
+
+      if (!quizData || !quizData.questions) {
+        throw new Error('Invalid quiz data received');
+      }
+
+      setQuiz(quizData);
       setLoading(false);
     } catch (error) {
       console.error('Error fetching quiz:', error);
@@ -52,7 +76,8 @@ function QuizModal({ topic, onClose, onComplete }) {
   };
 
   const handleSubmit = () => {
-    const timeSpent = Math.floor((Date.now() - startTime) / 1000 / 60); // in minutes
+    // Use seconds instead of minutes to avoid 0 for quick completions
+    const timeSpent = Math.max(1, Math.floor((Date.now() - startTime) / 1000));
     onComplete(quiz, userAnswers, timeSpent);
   };
 
@@ -86,31 +111,41 @@ function QuizModal({ topic, onClose, onComplete }) {
         {/* Question */}
         <div style={styles.questionBox}>
           <h2 style={styles.questionText}>Question {currentQuestionIndex + 1}</h2>
-          <p style={styles.questionContent}>{currentQuestion.question}</p>
+          <p style={styles.questionContent}>{cleanMarkdown(currentQuestion.question)}</p>
         </div>
 
         {/* Options */}
         <div style={styles.optionsContainer}>
-          {['A', 'B', 'C', 'D'].map(optionKey => (
-            <div
-              key={optionKey}
-              onClick={() => handleOptionSelect(currentQuestion.id, optionKey)}
-              onMouseEnter={() => setHoveredOption(optionKey)}
-              onMouseLeave={() => setHoveredOption(null)}
-              style={{
-                ...styles.optionCard,
-                ...(selectedAnswer === optionKey ? styles.optionSelected : {}),
-                ...(hoveredOption === optionKey && selectedAnswer !== optionKey ? styles.optionHover : {})
-              }}
-            >
-              <span style={styles.optionText}>
-                Option {optionKey}
-              </span>
-              <p style={styles.optionContent}>
-                {currentQuestion.options[optionKey]}
-              </p>
-            </div>
-          ))}
+          {['A', 'B', 'C', 'D'].map(optionKey => {
+            const isSelected = selectedAnswer === optionKey;
+            const isHovered = hoveredOption === optionKey && !isSelected;
+            return (
+              <div
+                key={optionKey}
+                onClick={() => handleOptionSelect(currentQuestion.id, optionKey)}
+                onMouseEnter={() => setHoveredOption(optionKey)}
+                onMouseLeave={() => setHoveredOption(null)}
+                style={{
+                  ...styles.optionCard,
+                  borderColor: isSelected || isHovered ? '#3b9eff' : '#2d333d',
+                  boxShadow: isSelected
+                    ? '0 0 30px rgba(59, 158, 255, 0.3)'
+                    : isHovered
+                      ? '0 0 20px rgba(59, 158, 255, 0.2)'
+                      : 'none',
+                  backgroundColor: isSelected ? 'rgba(59, 158, 255, 0.1)' : '#1c1f26',
+                  transform: isHovered ? 'translateY(-2px)' : 'none'
+                }}
+              >
+                <span style={styles.optionText}>
+                  Option {optionKey}
+                </span>
+                <p style={styles.optionContent}>
+                  {cleanMarkdown(currentQuestion.options[optionKey])}
+                </p>
+              </div>
+            );
+          })}
         </div>
 
         {/* Navigation */}
@@ -229,7 +264,9 @@ const styles = {
   },
   optionCard: {
     backgroundColor: '#1c1f26',
-    border: '2px solid #2d333d',
+    borderWidth: '2px',
+    borderStyle: 'solid',
+    borderColor: '#2d333d',
     borderRadius: '16px',
     padding: '24px 30px',
     cursor: 'pointer',
@@ -237,16 +274,6 @@ const styles = {
     display: 'flex',
     flexDirection: 'column',
     gap: '8px'
-  },
-  optionHover: {
-    borderColor: '#3b9eff',
-    boxShadow: '0 0 20px rgba(59, 158, 255, 0.2)',
-    transform: 'translateY(-2px)'
-  },
-  optionSelected: {
-    borderColor: '#3b9eff',
-    boxShadow: '0 0 30px rgba(59, 158, 255, 0.3)',
-    backgroundColor: 'rgba(59, 158, 255, 0.1)'
   },
   optionText: {
     fontSize: '14px',

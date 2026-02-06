@@ -113,12 +113,25 @@ function StudyScheduler() {
       });
 
       const result = await response.json();
-      setQuizResults(result.result);
+
+      // Check if the response indicates an error
+      if (!response.ok || result.success === false) {
+        throw new Error(result.error || 'Failed to submit quiz');
+      }
+
+      // Backend returns scoringResults directly (not nested under 'result' property)
+      // It contains: score, totalQuestions, correctAnswers, incorrectQuestions
+      if (result.score === undefined) {
+        throw new Error('Invalid response: missing score');
+      }
+
+      setQuizResults(result);
       setQuizMode(false);
 
     } catch (error) {
       console.error('Error submitting quiz:', error);
-      alert('Failed to submit quiz');
+      alert('Failed to submit quiz: ' + error.message);
+      setQuizMode(false);
     }
   };
 

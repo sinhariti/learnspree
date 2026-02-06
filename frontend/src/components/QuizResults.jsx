@@ -1,7 +1,20 @@
 import React from 'react';
 
-function QuizResults({ score, totalQuestions, correctAnswers, incorrectQuestions, onClose }) {
-  const percentage = score;
+function QuizResults({ score = 0, totalQuestions = 0, correctAnswers = 0, incorrectQuestions = [], onClose }) {
+  // Safety check - if score is undefined, show error state
+  if (score === undefined || score === null) {
+    return (
+      <div style={styles.overlay} onClick={onClose}>
+        <div style={styles.modal} onClick={(e) => e.stopPropagation()}>
+          <h2 style={styles.header}>Error Loading Results</h2>
+          <p style={{ color: '#f87171', textAlign: 'center' }}>Unable to load quiz results. Please try again.</p>
+          <button onClick={onClose} style={styles.closeButton}>Back to Timeline</button>
+        </div>
+      </div>
+    );
+  }
+
+  const percentage = typeof score === 'number' ? score : 0;
   const isPassed = percentage >= 60;
 
   return (
