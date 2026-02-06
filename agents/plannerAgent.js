@@ -11,49 +11,64 @@ async function generateInitialPlan(studentData) {
   const targetMinutes = hoursPerDay * 60;
 
   const prompt = `You are an expert study planner for competitive exams.
-   
-   Student details:
-   - Exam: ${examName}
-   - Days available: ${totalDays}
-   - Daily study hours: ${hoursPerDay}
-   - Syllabus: ${syllabus.join(', ')}
-   
-   Generate a detailed ${totalDays}-day study schedule.
-   
-   For each day, provide:
-   1. Topics to cover
-   2. Specific tasks (theory/quiz/practice/revision)
-   3. Time allocation (in minutes)
-   4. Brief reasoning for this day's focus
-   
-   IMPORTANT RULES:
-   - Start with foundational topics before advanced ones
-   - Include theory, practice, and quiz tasks
-   - Use ONLY these types for tasks: "theory", "quiz", "practice", "revision"
-   - Distribute topics evenly across days
-   - Include revision days (every 7 days)
-   - Each day should use approximately ${targetMinutes} minutes
-   
-   Return ONLY valid JSON in this exact format:
-   {
-     "schedule": [
-       {
-         "day": 1,
-         "topics": ["Topic Name"],
-         "tasks": [
-           {
-             "topic": "Topic Name",
-             "type": "theory",
-             "duration": 90,
-             "description": "Task description"
-           }
-         ],
-         "reasoning": "Reason for today's focus"
-       }
-     ]
-   }
-   
-   Do not include markdown formatting or explanations outside the JSON.`;
+
+Student details:
+- Exam: ${examName}
+- Days available: ${totalDays}
+- Daily study hours: ${hoursPerDay}
+- Syllabus: ${syllabus.join(', ')}
+
+Generate a detailed ${totalDays}-day study schedule.
+
+TASK DESCRIPTION FORMAT (CRITICAL):
+- Keep descriptions SHORT (max 6-8 words)
+- Format: "Key concepts covered"
+- Examples:
+  ✅ GOOD: "Normalization, functional dependencies"
+  ✅ GOOD: "Binary trees, traversal algorithms"
+  ❌ BAD: "Study normalization from 1NF to BCNF including functional dependencies and how to decompose relations step by step"
+
+For each day, provide:
+1. Topics to cover (be specific: "DBMS - Normalization" not just "DBMS")
+2. Specific tasks (theory/quiz/practice)
+3. Time allocation (in minutes)
+4. Brief reasoning for this day's focus
+
+IMPORTANT RULES:
+- Start with foundational topics before advanced ones
+- Include theory, practice, and quiz tasks
+- Use ONLY these types for tasks: "theory", "quiz", "practice", "revision"
+- Distribute topics evenly across days
+- Include revision days (every 7 days)
+- Each day should use approximately ${hoursPerDay * 60} minutes
+- Topic names should be specific: "OS - Deadlocks" not "Operating Systems"
+
+Return ONLY valid JSON in this exact format:
+{
+  "schedule": [
+    {
+      "day": 1,
+      "topics": ["Operating Systems - Process Management"],
+      "tasks": [
+        {
+          "topic": "Operating Systems - Process Management",
+          "type": "theory",
+          "duration": 90,
+          "description": "CPU scheduling, context switching"
+        },
+        {
+          "topic": "Operating Systems - Process Management",
+          "type": "quiz",
+          "duration": 30,
+          "description": "10 MCQs on process states"
+        }
+      ],
+      "reasoning": "Starting with OS fundamentals as it's foundational"
+    }
+  ]
+}
+
+Do not include markdown formatting or explanations outside the JSON.`;
 
   let retryCount = 0;
   let schedule = null;

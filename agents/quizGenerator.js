@@ -55,8 +55,49 @@ async function generateQuiz(topic, difficulty, numQuestions = 5) {
     try {
       rawResponse = await generateContent(prompt, false); // useThinking: false
 
-      // Clean up potential markdown formatting
-      const jsonString = rawResponse.replace(/```json|```/g, '').trim();
+      // Robust JSON extraction: Find the complete outermost JSON object by counting braces
+      const firstBrace = rawResponse.indexOf('{');
+
+      if (firstBrace === -1) {
+        throw new Error("No JSON object found in response");
+      }
+
+      let braceCount = 0;
+      let inString = false;
+      let escapeNext = false;
+      let jsonString = '';
+
+      for (let i = firstBrace; i < rawResponse.length; i++) {
+        const char = rawResponse[i];
+
+        if (escapeNext) {
+          escapeNext = false;
+          jsonString += char;
+          continue;
+        }
+
+        if (char === '\\') {
+          escapeNext = true;
+          jsonString += char;
+          continue;
+        }
+
+        if (char === '"') {
+          inString = !inString;
+        }
+
+        if (!inString) {
+          if (char === '{') braceCount++;
+          if (char === '}') braceCount--;
+        }
+
+        jsonString += char;
+
+        if (braceCount === 0) {
+          break;
+        }
+      }
+
       const parsed = JSON.parse(jsonString);
 
       if (!parsed.quiz || !Array.isArray(parsed.quiz.questions)) {
@@ -83,10 +124,15 @@ async function generateQuiz(topic, difficulty, numQuestions = 5) {
       });
 
       quizData = parsed.quiz;
+      console.log(`✓ Successfully generated quiz with ${quizData.questions.length} questions`);
       break;
     } catch (error) {
       retryCount++;
-      console.error(`Attempt ${retryCount} failed to parse/validate Quiz JSON:`, error.message);
+      console.error(`✗ Attempt ${retryCount} failed:`, error.message);
+      console.error('Stack:', error.stack);
+      if (rawResponse) {
+        console.error('Response preview:', rawResponse.substring(0, 300));
+      }
       if (retryCount >= 2) {
         console.error("Raw response:", rawResponse);
         throw new Error("Failed to generate a valid quiz after 2 attempts.");
