@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 
 const API_BASE = 'http://localhost:5001/api';
 
@@ -24,8 +24,15 @@ function QuizModal({ topic, onClose, onComplete }) {
   const [userAnswers, setUserAnswers] = useState({});
   const [startTime] = useState(Date.now());
   const [hoveredOption, setHoveredOption] = useState(null);
+  const hasFetched = useRef(false);
 
   useEffect(() => {
+    // Prevent double fetch in React Strict Mode
+    if (hasFetched.current) {
+      return;
+    }
+    hasFetched.current = true;
+
     console.log('QuizModal mounted for topic:', topic);
     fetchQuiz();
   }, []);
@@ -37,6 +44,7 @@ function QuizModal({ topic, onClose, onComplete }) {
       const response = await fetch(
         `${API_BASE}/quiz/${encodedTopic}?difficulty=medium&questions=5`
       );
+
       const data = await response.json();
 
       // Backend returns quiz object directly (not nested under 'quiz' property)

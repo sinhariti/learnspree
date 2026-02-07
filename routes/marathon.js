@@ -219,4 +219,216 @@ router.post('/run-daily-check', async (req, res) => {
   }
 });
 
+// ==========================================
+// STUDY GROUP ORCHESTRATOR ENDPOINTS
+// ==========================================
+
+const StudyGroupOrchestrator = require('../agents/orchestrator');
+const AgentConversation = require('../models/AgentConversation');
+
+/**
+ * POST /api/study-group/chat
+ * Main endpoint for interacting with the AI study group.
+ * Orchestrator selects the best agent based on context.
+ */
+router.post('/study-group/chat', async (req, res) => {
+  try {
+    const { studentId, message, sessionId, topic } = req.body;
+
+    if (!message) {
+      return res.status(400).json({ success: false, error: "Message is required" });
+    }
+
+    const orchestrator = new StudyGroupOrchestrator(studentId || 'demo_student');
+    const response = await orchestrator.processStudentInput(message, {
+      sessionId: sessionId || `session_${Date.now()}`,
+      topic
+    });
+
+    res.json({
+      success: true,
+      ...response
+    });
+  } catch (error) {
+    console.error("Error in /study-group/chat:", error);
+    res.status(500).json({ success: false, error: "Chat processing failed", details: error.message });
+  }
+});
+
+/**
+ * GET /api/study-group/session/:sessionId
+ * Get conversation history for a session.
+ */
+router.get('/study-group/session/:sessionId', async (req, res) => {
+  try {
+    const { sessionId } = req.params;
+
+    const session = await AgentConversation.findOne({ sessionId });
+
+    if (!session) {
+      return res.status(404).json({ success: false, error: "Session not found" });
+    }
+
+    res.json({
+      success: true,
+      sessionId: session.sessionId,
+      studentId: session.studentId,
+      topic: session.topic,
+      status: session.status,
+      activeAgent: session.activeAgent,
+      messages: session.messages,
+      handoffs: session.handoffs,
+      metrics: session.sessionMetrics,
+      createdAt: session.createdAt,
+      updatedAt: session.updatedAt
+    });
+  } catch (error) {
+    console.error("Error in /study-group/session:", error);
+    res.status(500).json({ success: false, error: "Failed to fetch session" });
+  }
+});
+
+/**
+ * POST /api/study-group/trigger/:agentType
+ * Manually trigger a specific agent (useful for demos).
+ */
+router.post('/study-group/trigger/:agentType', async (req, res) => {
+  try {
+    const { agentType } = req.params;
+    const { studentId, topic, sessionId } = req.body;
+
+    const validAgents = ['quizmaster', 'explainer', 'advocate', 'motivator'];
+    if (!validAgents.includes(agentType)) {
+      return res.status(400).json({
+        success: false,
+        error: `Invalid agent type. Must be one of: ${validAgents.join(', ')}`
+      });
+    }
+
+    const orchestrator = new StudyGroupOrchestrator(studentId || 'demo_student');
+    const response = await orchestrator.triggerAgent(agentType, {
+      topic,
+      sessionId: sessionId || `demo_${Date.now()}`
+    });
+
+    res.json({
+      success: true,
+      ...response
+    });
+  } catch (error) {
+    console.error("Error in /study-group/trigger:", error);
+    res.status(500).json({ success: false, error: "Agent trigger failed", details: error.message });
+  }
+});
+
+/**
+ * GET /api/study-group/sessions
+ * Get all sessions for a student.
+ */
+router.get('/study-group/sessions', async (req, res) => {
+  try {
+    const studentId = req.query.studentId || 'demo_student';
+    const limit = parseInt(req.query.limit) || 10;
+
+    const sessions = await AgentConversation.find({ studentId })
+      .sort({ createdAt: -1 })
+      .limit(limit)
+      .select('sessionId topic status activeAgent sessionMetrics createdAt');
+
+    res.json({
+      success: true,
+      sessions
+    });
+  } catch (error) {
+    console.error("Error in /study-group/sessions:", error);
+    res.status(500).json({ success: false, error: "Failed to fetch sessions" });
+  }
+});
+
+/**
+ * POST /api/study-group/handoff
+ * Manually execute a handoff between agents.
+ */
+router.post('/study-group/handoff', async (req, res) => {
+  try {
+    const { studentId, sessionId, toAgent, reason } = req.body;
+
+    if (!sessionId || !toAgent) {
+      return res.status(400).json({ success: false, error: "sessionId and toAgent are required" });
+    }
+
+    const orchestrator = new StudyGroupOrchestrator(studentId || 'demo_student');
+    await orchestrator.initSession(sessionId);
+
+    const result = await orchestrator.executeHandoff(toAgent, { reason });
+
+    res.json({
+      success: true,
+      ...result
+    });
+  } catch (error) {
+    console.error("Error in /study-group/handoff:", error);
+    res.status(500).json({ success: false, error: "Handoff failed", details: error.message });
+  }
+});
+
+/**
+ * POST /api/study-group/score-answer
+ * Score a quiz answer and trigger automatic handoff if high performance.
+ * Returns thinking steps for UI animation.
+ */
+router.post('/study-group/score-answer', async (req, res) => {
+  try {
+    const { studentId, sessionId, question, studentAnswer, correctAnswer, topic } = req.body;
+
+    if (!sessionId || !question || !studentAnswer) {
+      return res.status(400).json({
+        success: false,
+        error: "sessionId, question, and studentAnswer are required"
+      });
+    }
+
+    const orchestrator = new StudyGroupOrchestrator(studentId || 'demo_student');
+    const result = await orchestrator.scoreQuizAnswer(question, studentAnswer, correctAnswer, {
+      sessionId,
+      topic
+    });
+
+    res.json({
+      success: true,
+      ...result,
+      thinkingSteps: result.autoHandoff?.thinking || null
+    });
+  } catch (error) {
+    console.error("Error in /study-group/score-answer:", error);
+    res.status(500).json({ success: false, error: "Scoring failed", details: error.message });
+  }
+});
+
+/**
+ * GET /api/study-group/mastery/:sessionId
+ * Get topic mastery progress for a session.
+ */
+router.get('/study-group/mastery/:sessionId', async (req, res) => {
+  try {
+    const { sessionId } = req.params;
+    const studentId = req.query.studentId || 'demo_student';
+
+    const orchestrator = new StudyGroupOrchestrator(studentId);
+    await orchestrator.initSession(sessionId);
+
+    const masteryData = orchestrator.calculateTopicMastery();
+
+    res.json({
+      success: true,
+      sessionId,
+      topic: orchestrator.currentSession?.topic,
+      ...masteryData
+    });
+  } catch (error) {
+    console.error("Error in /study-group/mastery:", error);
+    res.status(500).json({ success: false, error: "Failed to get mastery data" });
+  }
+});
+
 module.exports = router;

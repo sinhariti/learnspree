@@ -28,6 +28,43 @@ const studentSchema = new mongoose.Schema({
     type: Number,
     default: 1
   },
+  // Agent preferences for Study Group Orchestrator
+  agentPreferences: {
+    preferredExplanationStyle: {
+      type: String,
+      enum: ['analogies', 'technical', 'visual', 'step-by-step'],
+      default: 'analogies'
+    },
+    motivationFrequency: {
+      type: String,
+      enum: ['low', 'medium', 'high'],
+      default: 'medium'
+    },
+    challengeLevel: {
+      type: String,
+      enum: ['gentle', 'moderate', 'intense'],
+      default: 'moderate'
+    }
+  },
+  // Engagement metrics for tracking study patterns
+  engagementMetrics: {
+    averageSessionDuration: {
+      type: Number,
+      default: 0
+    },
+    streakDays: {
+      type: Number,
+      default: 0
+    },
+    lastActiveAt: {
+      type: Date,
+      default: Date.now
+    },
+    totalStudyMinutes: {
+      type: Number,
+      default: 0
+    }
+  },
   createdAt: {
     type: Date,
     default: Date.now

@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import QuizModal from './QuizModal';
 import QuizResults from './QuizResults';
+import StudyGroupChat from './StudyGroupChat';
 
 const API_BASE = 'http://localhost:5001/api';
 
@@ -14,6 +15,7 @@ function StudyScheduler() {
   const [currentQuizTopic, setCurrentQuizTopic] = useState(null);
   const [currentDay, setCurrentDay] = useState(null);
   const [quizResults, setQuizResults] = useState(null); // Performance results state
+  const [showStudyGroup, setShowStudyGroup] = useState(false); // Study Group Chat modal
 
   const parseUserInput = (input) => {
     // Extract days
@@ -160,6 +162,12 @@ function StudyScheduler() {
           >
             {loading ? 'Generating Plan...' : 'Initialise Agent'}
           </button>
+          <button
+            onClick={() => setShowStudyGroup(true)}
+            style={styles.studyGroupButton}
+          >
+            🎓 AI Study Group
+          </button>
         </div>
 
         {schedule && (
@@ -244,6 +252,10 @@ function StudyScheduler() {
           onClose={() => setQuizResults(null)}
         />
       )}
+
+      {showStudyGroup && (
+        <StudyGroupChat onClose={() => setShowStudyGroup(false)} />
+      )}
     </div>
   );
 }
@@ -283,7 +295,8 @@ const styles = {
   buttonContainer: {
     display: 'flex',
     justifyContent: 'flex-start',
-    marginBottom: '60px'
+    marginBottom: '60px',
+    gap: '16px'
   },
   button: {
     padding: '12px 28px',
@@ -294,6 +307,18 @@ const styles = {
     borderRadius: '30px',
     fontWeight: '600',
     transition: 'all 0.2s ease'
+  },
+  studyGroupButton: {
+    padding: '12px 28px',
+    fontSize: '16px',
+    background: 'linear-gradient(135deg, #8b5cf6 0%, #6d28d9 100%)',
+    color: '#ffffff',
+    border: 'none',
+    borderRadius: '30px',
+    fontWeight: '600',
+    cursor: 'pointer',
+    transition: 'all 0.2s ease',
+    boxShadow: '0 4px 12px rgba(139, 92, 246, 0.3)'
   },
   timeline: {
     marginTop: '20px',
