@@ -5,9 +5,22 @@ import React from 'react';
  * Displays visual progress indicator for topic mastery
  */
 const MasteryProgress = ({ masteryData, topic }) => {
-    if (!masteryData) return null;
+    // Provide default values if data is missing
+    const data = masteryData || {
+        level: 'beginner',
+        percentage: 0,
+        questionsAnswered: 0,
+        correctAnswers: 0,
+        accuracy: 0,
+        milestones: {
+            understanding: false,
+            practicing: false,
+            proficient: false,
+            mastered: false
+        }
+    };
 
-    const { level, percentage, questionsAnswered, correctAnswers, accuracy, milestones } = masteryData;
+    const { level, percentage, questionsAnswered, correctAnswers, accuracy, milestones } = data;
 
     const levelConfig = {
         beginner: { emoji: '🌱', color: '#6b7280', label: 'Just Started' },

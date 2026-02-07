@@ -3,7 +3,7 @@ import QuizModal from './QuizModal';
 import QuizResults from './QuizResults';
 import StudyGroupChat from './StudyGroupChat';
 
-const API_BASE = 'http://localhost:5001/api';
+const API_BASE = import.meta.env.VITE_API_BASE || 'http://localhost:5001/api';
 
 function StudyScheduler() {
   const [userInput, setUserInput] = useState('');

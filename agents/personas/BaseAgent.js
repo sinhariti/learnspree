@@ -96,23 +96,75 @@ Do not include markdown formatting outside the JSON.`;
      * @private
      */
     _parseResponse(responseText) {
+        if (!responseText || typeof responseText !== 'string') {
+            return { message: 'I apologize, I had trouble generating a response.', intent: null, confidence: 0.5 };
+        }
+
         try {
             // Clean up potential markdown
-            const jsonString = responseText.replace(/```json|```/g, '').trim();
+            let jsonString = responseText.replace(/```json|```/g, '').trim();
 
             // Find JSON object
             const firstBrace = jsonString.indexOf('{');
             const lastBrace = jsonString.lastIndexOf('}');
 
-            if (firstBrace === -1 || lastBrace === -1) {
-                return { message: responseText, intent: null, confidence: 0.5 };
+            if (firstBrace !== -1 && lastBrace !== -1 && lastBrace > firstBrace) {
+                const parsed = JSON.parse(jsonString.substring(firstBrace, lastBrace + 1));
+
+                // Validate that message exists and is a string
+                if (parsed.message && typeof parsed.message === 'string') {
+                    return {
+                        message: parsed.message,
+                        intent: parsed.intent || null,
+                        confidence: parsed.confidence || 0.8,
+                        handoff: parsed.handoff || null
+                    };
+                }
             }
 
-            const parsed = JSON.parse(jsonString.substring(firstBrace, lastBrace + 1));
-            return parsed;
-        } catch (error) {
-            console.warn('Failed to parse agent response as JSON, using raw text');
+            // Fallback: if no valid JSON found, check if the response is plain text
+            // Remove any JSON-like metadata if accidentally included
+            const cleanedText = responseText
+                .replace(/\{[\s\S]*"message"[\s\S]*\}/g, '')  // Remove JSON blocks
+                .replace(/```[\s\S]*```/g, '')  // Remove code blocks
+                .trim();
+
+            if (cleanedText) {
+                return { message: cleanedText, intent: null, confidence: 0.5 };
+            }
+
+            // If all else fails, try to extract just the message from the original
+            const messageMatch = responseText.match(/"message"\s*:\s*"([^"]+(?:\\.[^"]+)*)"/);
+            if (messageMatch && messageMatch[1]) {
+                return {
+                    message: messageMatch[1].replace(/\\n/g, '\n').replace(/\\"/g, '"'),
+                    intent: null,
+                    confidence: 0.5
+                };
+            }
+
             return { message: responseText, intent: null, confidence: 0.5 };
+        } catch (error) {
+            console.warn('Failed to parse agent response as JSON:', error.message);
+
+            // Try regex extraction as last resort
+            const messageMatch = responseText.match(/"message"\s*:\s*"([^"]+(?:\\.[^"]+)*)"/);
+            if (messageMatch && messageMatch[1]) {
+                return {
+                    message: messageMatch[1].replace(/\\n/g, '\n').replace(/\\"/g, '"'),
+                    intent: null,
+                    confidence: 0.5
+                };
+            }
+
+            // Final fallback - return cleaned text
+            const cleanText = responseText
+                .replace(/[{}\[\]"]/g, ' ')
+                .replace(/message\s*:|intent\s*:|confidence\s*:|handoff\s*:/gi, '')
+                .replace(/\s+/g, ' ')
+                .trim();
+
+            return { message: cleanText || 'I had trouble responding. Please try again.', intent: null, confidence: 0.5 };
         }
     }
 

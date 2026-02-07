@@ -1,9 +1,9 @@
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef, useEffect, useCallback } from 'react';
 import AgentAvatar from './AgentAvatar';
 import MasteryProgress from './MasteryProgress';
 import AgentThinking from './AgentThinking';
 
-const API_BASE = 'http://localhost:5001/api';
+const API_BASE = import.meta.env.VITE_API_BASE || 'http://localhost:5001/api';
 
 /**
  * Study Group Chat Component
@@ -21,6 +21,10 @@ function StudyGroupChat({ onClose }) {
     const [masteryData, setMasteryData] = useState(null);
     const [thinkingSteps, setThinkingSteps] = useState(null);
     const [showThinking, setShowThinking] = useState(false);
+    const [pendingResponse, setPendingResponse] = useState(null);
+    const [quizMode, setQuizMode] = useState(false);
+    const [quizCount, setQuizCount] = useState(0);
+    const [correctStreak, setCorrectStreak] = useState(0);
     const messagesEndRef = useRef(null);
 
     const scrollToBottom = () => {
@@ -31,15 +35,45 @@ function StudyGroupChat({ onClose }) {
         scrollToBottom();
     }, [messages, showThinking]);
 
-    const startSession = async () => {
+    // Handle thinking animation complete
+    const handleThinkingComplete = useCallback(() => {
+        setShowThinking(false);
+        setThinkingSteps(null);
+
+        // Add the pending response after thinking animation
+        if (pendingResponse) {
+            setMessages(prev => [...prev, {
+                type: 'handoff',
+                from: pendingResponse.from,
+                to: pendingResponse.to,
+                reason: pendingResponse.reason,
+                timestamp: new Date()
+            }, {
+                agent: pendingResponse.agent,
+                agentName: pendingResponse.agentName,
+                content: pendingResponse.message,
+                timestamp: new Date(),
+                metadata: pendingResponse.metadata
+            }]);
+            setPendingResponse(null);
+        }
+    }, [pendingResponse]);
+
+    const startSession = async (selectedAgent = 'explainer') => {
         if (!topic.trim()) return;
 
         setShowTopicInput(false);
         setIsLoading(true);
 
+        // Check if quiz mode
+        if (selectedAgent === 'quizmaster') {
+            setQuizMode(true);
+            setQuizCount(0);
+            setCorrectStreak(0);
+        }
+
         try {
-            // Trigger explainer to start the session
-            const response = await fetch(`${API_BASE}/study-group/trigger/explainer`, {
+            const response = await fetch(`${API_BASE}/study-group/trigger/${selectedAgent}`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
@@ -59,6 +93,21 @@ function StudyGroupChat({ onClose }) {
                     content: data.message,
                     timestamp: new Date()
                 }]);
+
+                // Initialize mastery data
+                setMasteryData({
+                    level: 'beginner',
+                    percentage: 0,
+                    questionsAnswered: 0,
+                    correctAnswers: 0,
+                    accuracy: 0,
+                    milestones: {
+                        understanding: false,
+                        practicing: false,
+                        proficient: false,
+                        mastered: false
+                    }
+                });
             }
         } catch (error) {
             console.error('Failed to start session:', error);
@@ -84,60 +133,166 @@ function StudyGroupChat({ onClose }) {
         setIsLoading(true);
 
         try {
-            const response = await fetch(`${API_BASE}/study-group/chat`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    studentId: 'demo_student',
-                    message: userMessage,
-                    sessionId,
-                    topic
-                })
-            });
-
-            const data = await response.json();
-
-            if (data.success) {
-                // Update mastery data if available
-                if (data.masteryProgress) {
-                    setMasteryData(data.masteryProgress);
+            // Check if this looks like an actual quiz answer (not just "yes", "ready", etc.)
+            const isLikelyAnswer = (msg) => {
+                const lowered = msg.toLowerCase().trim();
+                const conversationalResponses = ['yes', 'yeah', 'yep', 'ok', 'okay', 'sure', 'ready', 'let\'s go', 'lets go', 'go', 'start', 'i\'m ready', 'im ready', 'yes please', 'go ahead', 'next', 'continue'];
+                // It's an answer if it's NOT just a short conversational response
+                // or if it contains option letters like A, B, C, D
+                if (conversationalResponses.includes(lowered) || conversationalResponses.some(r => lowered === r)) {
+                    return false;
                 }
+                // Check if it's an option selection (A, B, C, D) or has enough content to be an answer
+                if (/^[abcd]$/i.test(lowered) || /^option\s*[abcd]/i.test(lowered) || lowered.length > 10) {
+                    return true;
+                }
+                return lowered.length > 5; // Short responses probably not answers
+            };
 
-                // Check for agent change (handoff)
-                if (activeAgent && data.agent !== activeAgent) {
-                    setHandoffs(prev => [...prev, {
-                        from: activeAgent,
-                        to: data.agent,
-                        timestamp: new Date()
+            // If in quiz mode and answering with a real answer, use score-answer endpoint
+            if (quizMode && activeAgent === 'quizmaster' && isLikelyAnswer(userMessage)) {
+                const lastAgentMessage = messages.filter(m => m.agent === 'quizmaster').pop();
+
+                const response = await fetch(`${API_BASE}/study-group/score-answer`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        studentId: 'demo_student',
+                        sessionId,
+                        question: lastAgentMessage?.content || 'Quiz question',
+                        studentAnswer: userMessage,
+                        topic
+                    })
+                });
+
+                const data = await response.json();
+
+                if (data.success) {
+                    // Update quiz tracking
+                    const newQuizCount = quizCount + 1;
+                    setQuizCount(newQuizCount);
+
+                    if (data.isCorrect) {
+                        setCorrectStreak(prev => prev + 1);
+                    } else {
+                        setCorrectStreak(0);
+                    }
+
+                    // Update mastery data
+                    if (data.masteryProgress) {
+                        setMasteryData(data.masteryProgress);
+                    }
+
+                    // Add feedback message
+                    setMessages(prev => [...prev, {
+                        agent: 'quizmaster',
+                        agentName: 'Professor Quiz',
+                        content: `${data.isCorrect ? '✅' : '❌'} ${data.feedback}\n\n📊 Score: ${data.score || 0}%`,
+                        timestamp: new Date(),
+                        metadata: { isQuizFeedback: true, score: data.score }
                     }]);
 
-                    // Add handoff notification with thinking animation if available
-                    if (data.thinkingSteps && data.thinkingSteps.length > 0) {
-                        setThinkingSteps(data.thinkingSteps);
-                        setShowThinking(true);
+                    // Check for auto-handoff
+                    if (data.autoHandoff) {
+                        // Show thinking animation
+                        if (data.thinkingSteps && data.thinkingSteps.length > 0) {
+                            setThinkingSteps(data.thinkingSteps);
+                            setShowThinking(true);
+                            setPendingResponse({
+                                from: 'quizmaster',
+                                to: data.autoHandoff.to,
+                                reason: data.autoHandoff.reason,
+                                agent: data.autoHandoff.to,
+                                agentName: getAgentName(data.autoHandoff.to),
+                                message: `🎯 ${data.autoHandoff.reason}\n\nLet's test your true mastery with some challenging scenarios!`,
+                                metadata: { handoff: true }
+                            });
+                            setActiveAgent(data.autoHandoff.to);
+                            setQuizMode(false); // Exit quiz mode
+                        } else {
+                            // Direct handoff without animation
+                            setMessages(prev => [...prev, {
+                                type: 'handoff',
+                                from: 'quizmaster',
+                                to: data.autoHandoff.to,
+                                reason: data.autoHandoff.reason,
+                                timestamp: new Date()
+                            }]);
+                            setActiveAgent(data.autoHandoff.to);
+                            setQuizMode(false);
+                        }
                     } else {
-                        setMessages(prev => [...prev, {
-                            type: 'handoff',
+                        // Continue quiz - ask next question
+                        setTimeout(() => askNextQuestion(), 1000);
+                    }
+                }
+            } else {
+                // Regular chat flow
+                const response = await fetch(`${API_BASE}/study-group/chat`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        studentId: 'demo_student',
+                        message: userMessage,
+                        sessionId,
+                        topic
+                    })
+                });
+
+                const data = await response.json();
+
+                if (data.success) {
+                    // Update mastery data if available
+                    if (data.masteryProgress) {
+                        setMasteryData(data.masteryProgress);
+                    }
+
+                    // Check for agent change (handoff)
+                    if (activeAgent && data.agent !== activeAgent) {
+                        setHandoffs(prev => [...prev, {
                             from: activeAgent,
                             to: data.agent,
                             timestamp: new Date()
                         }]);
+
+                        // Add handoff notification with thinking animation if available
+                        if (data.thinkingSteps && data.thinkingSteps.length > 0) {
+                            setThinkingSteps(data.thinkingSteps);
+                            setShowThinking(true);
+                            setPendingResponse({
+                                from: activeAgent,
+                                to: data.agent,
+                                agent: data.agent,
+                                agentName: data.agentName,
+                                message: data.message,
+                                metadata: data.metadata
+                            });
+                        } else {
+                            setMessages(prev => [...prev, {
+                                type: 'handoff',
+                                from: activeAgent,
+                                to: data.agent,
+                                timestamp: new Date()
+                            }, {
+                                agent: data.agent,
+                                agentName: data.agentName,
+                                content: data.message,
+                                timestamp: new Date(),
+                                metadata: data.metadata
+                            }]);
+                        }
+                    } else {
+                        // Same agent response
+                        setMessages(prev => [...prev, {
+                            agent: data.agent,
+                            agentName: data.agentName,
+                            content: data.message,
+                            timestamp: new Date(),
+                            metadata: data.metadata
+                        }]);
                     }
-                }
 
-                setActiveAgent(data.agent);
-
-                // Add agent response (delayed if showing thinking)
-                if (showThinking) {
-                    // Response will be added after thinking animation
-                } else {
-                    setMessages(prev => [...prev, {
-                        agent: data.agent,
-                        agentName: data.agentName,
-                        content: data.message,
-                        timestamp: new Date(),
-                        metadata: data.metadata
-                    }]);
+                    setActiveAgent(data.agent);
                 }
             }
         } catch (error) {
@@ -152,14 +307,47 @@ function StudyGroupChat({ onClose }) {
         }
     };
 
-    const handleThinkingComplete = () => {
-        setShowThinking(false);
-        setThinkingSteps(null);
-        // The handoff notification was already added, agent response should follow
+    const askNextQuestion = async () => {
+        setIsLoading(true);
+        try {
+            const response = await fetch(`${API_BASE}/study-group/chat`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    studentId: 'demo_student',
+                    message: 'Give me the next question',
+                    sessionId,
+                    topic
+                })
+            });
+
+            const data = await response.json();
+            if (data.success) {
+                setMessages(prev => [...prev, {
+                    agent: 'quizmaster',
+                    agentName: 'Professor Quiz',
+                    content: data.message,
+                    timestamp: new Date()
+                }]);
+            }
+        } catch (error) {
+            console.error('Failed to get next question:', error);
+        } finally {
+            setIsLoading(false);
+        }
     };
 
     const triggerAgent = async (agentType) => {
         setIsLoading(true);
+
+        // Enable quiz mode if switching to quizmaster
+        if (agentType === 'quizmaster') {
+            setQuizMode(true);
+            setQuizCount(0);
+            setCorrectStreak(0);
+        } else {
+            setQuizMode(false);
+        }
 
         try {
             const response = await fetch(`${API_BASE}/study-group/trigger/${agentType}`, {
@@ -215,7 +403,10 @@ function StudyGroupChat({ onClose }) {
             return (
                 <div key={index} style={styles.handoffNotification}>
                     <span style={styles.handoffIcon}>🔄</span>
-                    <span>Handing off from <strong>{getAgentName(msg.from)}</strong> to <strong>{getAgentName(msg.to)}</strong></span>
+                    <div style={styles.handoffContent}>
+                        <span>Handing off from <strong>{getAgentName(msg.from)}</strong> to <strong>{getAgentName(msg.to)}</strong></span>
+                        {msg.reason && <div style={styles.handoffReason}>{msg.reason}</div>}
+                    </div>
                 </div>
             );
         }
@@ -249,6 +440,15 @@ function StudyGroupChat({ onClose }) {
                         </div>
                     )}
                     <div style={styles.messageContent}>{msg.content}</div>
+                    {msg.metadata?.score !== undefined && (
+                        <div style={styles.scoreIndicator}>
+                            <span style={{
+                                color: msg.metadata.score >= 80 ? '#10b981' : msg.metadata.score >= 50 ? '#f59e0b' : '#ef4444'
+                            }}>
+                                Score: {msg.metadata.score}%
+                            </span>
+                        </div>
+                    )}
                     <div style={styles.timestamp}>
                         {new Date(msg.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
                     </div>
@@ -286,6 +486,7 @@ function StudyGroupChat({ onClose }) {
                     <div style={styles.headerLeft}>
                         <h2 style={styles.title}>🎓 AI Study Group</h2>
                         {topic && <span style={styles.topicBadge}>{topic}</span>}
+                        {quizMode && <span style={styles.quizBadge}>🎯 Quiz Mode</span>}
                     </div>
                     <button onClick={onClose} style={styles.closeButton}>×</button>
                 </div>
@@ -300,6 +501,7 @@ function StudyGroupChat({ onClose }) {
                                     key={agent}
                                     onClick={() => triggerAgent(agent)}
                                     disabled={isLoading}
+                                    title={agent === 'quizmaster' ? 'Quiz Mode - answer questions to unlock challenges!' : getAgentName(agent)}
                                     style={{
                                         ...styles.agentButton,
                                         borderColor: getAgentColor(agent),
@@ -313,10 +515,21 @@ function StudyGroupChat({ onClose }) {
                     </div>
                 )}
 
-                {/* Mastery Progress Bar */}
-                {!showTopicInput && masteryData && masteryData.questionsAnswered > 0 && (
+                {/* Mastery Progress Bar - Always show when session is active */}
+                {!showTopicInput && (
                     <div style={styles.masteryContainer}>
                         <MasteryProgress masteryData={masteryData} topic={topic} />
+                    </div>
+                )}
+
+                {/* Quiz Stats */}
+                {quizMode && (
+                    <div style={styles.quizStats}>
+                        <span>📝 Questions: {quizCount}</span>
+                        <span>🔥 Streak: {correctStreak}</span>
+                        <span style={{ color: '#9ca3af', fontSize: '12px' }}>
+                            (Hit 3+ correct to unlock Deep Challenge!)
+                        </span>
                     </div>
                 )}
 
@@ -327,13 +540,19 @@ function StudyGroupChat({ onClose }) {
                             <div style={styles.welcomeEmoji}>🎓</div>
                             <h3 style={styles.welcomeTitle}>Welcome to Your AI Study Group!</h3>
                             <p style={styles.welcomeText}>
-                                You'll be learning with a team of AI tutors who adapt to your needs:
+                                Choose how you'd like to learn:
                             </p>
                             <div style={styles.agentIntro}>
-                                <AgentAvatar agent="explainer" size="medium" />
-                                <AgentAvatar agent="quizmaster" size="medium" />
-                                <AgentAvatar agent="advocate" size="medium" />
-                                <AgentAvatar agent="motivator" size="medium" />
+                                <div style={styles.agentOption} onClick={() => topic.trim() && startSession('quizmaster')}>
+                                    <AgentAvatar agent="quizmaster" size="medium" />
+                                    <span style={styles.agentOptionLabel}>Quiz Me!</span>
+                                    <span style={styles.agentOptionDesc}>Answer questions → unlock challenges</span>
+                                </div>
+                                <div style={styles.agentOption} onClick={() => topic.trim() && startSession('explainer')}>
+                                    <AgentAvatar agent="explainer" size="medium" />
+                                    <span style={styles.agentOptionLabel}>Explain First</span>
+                                    <span style={styles.agentOptionDesc}>Learn concepts, then practice</span>
+                                </div>
                             </div>
                             <input
                                 type="text"
@@ -344,16 +563,29 @@ function StudyGroupChat({ onClose }) {
                                 style={styles.topicInput}
                                 autoFocus
                             />
-                            <button
-                                onClick={startSession}
-                                disabled={!topic.trim() || isLoading}
-                                style={{
-                                    ...styles.startButton,
-                                    opacity: (!topic.trim() || isLoading) ? 0.5 : 1
-                                }}
-                            >
-                                {isLoading ? 'Starting...' : 'Start Study Session'}
-                            </button>
+                            <div style={styles.startButtons}>
+                                <button
+                                    onClick={() => startSession('quizmaster')}
+                                    disabled={!topic.trim() || isLoading}
+                                    style={{
+                                        ...styles.startButton,
+                                        ...styles.quizStartButton,
+                                        opacity: (!topic.trim() || isLoading) ? 0.5 : 1
+                                    }}
+                                >
+                                    🎯 Start Quiz Mode
+                                </button>
+                                <button
+                                    onClick={() => startSession('explainer')}
+                                    disabled={!topic.trim() || isLoading}
+                                    style={{
+                                        ...styles.startButton,
+                                        opacity: (!topic.trim() || isLoading) ? 0.5 : 1
+                                    }}
+                                >
+                                    📚 Start Learning
+                                </button>
+                            </div>
                         </div>
                     ) : (
                         <>
@@ -363,7 +595,7 @@ function StudyGroupChat({ onClose }) {
                             {showThinking && thinkingSteps && (
                                 <AgentThinking
                                     thinkingSteps={thinkingSteps}
-                                    agentType={activeAgent}
+                                    agentType={pendingResponse?.to || activeAgent}
                                     onComplete={handleThinkingComplete}
                                 />
                             )}
@@ -371,7 +603,9 @@ function StudyGroupChat({ onClose }) {
                             {isLoading && !showThinking && (
                                 <div style={styles.typingIndicator}>
                                     <AgentAvatar agent={activeAgent || 'explainer'} size="small" isTyping />
-                                    <span style={styles.typingText}>Thinking...</span>
+                                    <span style={styles.typingText}>
+                                        {quizMode ? 'Checking your answer...' : 'Thinking...'}
+                                    </span>
                                 </div>
                             )}
                             <div ref={messagesEndRef} />
@@ -387,19 +621,19 @@ function StudyGroupChat({ onClose }) {
                             value={inputValue}
                             onChange={(e) => setInputValue(e.target.value)}
                             onKeyPress={handleKeyPress}
-                            placeholder="Ask a question, request a quiz, or just chat..."
+                            placeholder={quizMode ? "Type your answer..." : "Ask a question, request a quiz, or just chat..."}
                             style={styles.messageInput}
-                            disabled={isLoading}
+                            disabled={isLoading || showThinking}
                         />
                         <button
                             onClick={sendMessage}
-                            disabled={!inputValue.trim() || isLoading}
+                            disabled={!inputValue.trim() || isLoading || showThinking}
                             style={{
                                 ...styles.sendButton,
-                                opacity: (!inputValue.trim() || isLoading) ? 0.5 : 1
+                                opacity: (!inputValue.trim() || isLoading || showThinking) ? 0.5 : 1
                             }}
                         >
-                            Send
+                            {quizMode ? 'Submit' : 'Send'}
                         </button>
                     </div>
                 )}
@@ -443,7 +677,7 @@ const styles = {
         border: '1px solid #2d333d'
     },
     header: {
-        padding: '20px',
+        padding: '16px 20px',
         borderBottom: '1px solid #2d333d',
         display: 'flex',
         justifyContent: 'space-between',
@@ -452,11 +686,12 @@ const styles = {
     headerLeft: {
         display: 'flex',
         alignItems: 'center',
-        gap: '12px'
+        gap: '12px',
+        flexWrap: 'wrap'
     },
     title: {
         margin: 0,
-        fontSize: '24px',
+        fontSize: '22px',
         color: '#fff'
     },
     topicBadge: {
@@ -464,7 +699,15 @@ const styles = {
         color: '#3b82f6',
         padding: '4px 12px',
         borderRadius: '20px',
-        fontSize: '14px'
+        fontSize: '13px'
+    },
+    quizBadge: {
+        backgroundColor: '#f59e0b20',
+        color: '#f59e0b',
+        padding: '4px 12px',
+        borderRadius: '20px',
+        fontSize: '13px',
+        fontWeight: '600'
     },
     closeButton: {
         background: 'none',
@@ -475,7 +718,7 @@ const styles = {
         padding: '0 8px'
     },
     agentBar: {
-        padding: '12px 20px',
+        padding: '10px 20px',
         borderBottom: '1px solid #2d333d',
         display: 'flex',
         alignItems: 'center',
@@ -483,7 +726,7 @@ const styles = {
     },
     agentBarLabel: {
         color: '#9ca3af',
-        fontSize: '14px'
+        fontSize: '13px'
     },
     agentButtons: {
         display: 'flex',
@@ -500,6 +743,16 @@ const styles = {
     masteryContainer: {
         padding: '12px 20px',
         borderBottom: '1px solid #2d333d'
+    },
+    quizStats: {
+        padding: '8px 20px',
+        borderBottom: '1px solid #2d333d',
+        display: 'flex',
+        gap: '20px',
+        alignItems: 'center',
+        fontSize: '14px',
+        color: '#f59e0b',
+        backgroundColor: '#f59e0b10'
     },
     messagesArea: {
         flex: 1,
@@ -519,31 +772,52 @@ const styles = {
         padding: '20px'
     },
     welcomeEmoji: {
-        fontSize: '64px',
-        marginBottom: '20px'
+        fontSize: '56px',
+        marginBottom: '16px'
     },
     welcomeTitle: {
         color: '#fff',
-        fontSize: '28px',
-        marginBottom: '12px'
+        fontSize: '26px',
+        marginBottom: '8px'
     },
     welcomeText: {
         color: '#9ca3af',
-        fontSize: '16px',
-        marginBottom: '24px'
+        fontSize: '15px',
+        marginBottom: '20px'
     },
     agentIntro: {
         display: 'flex',
-        gap: '24px',
-        marginBottom: '32px',
+        gap: '20px',
+        marginBottom: '24px',
         flexWrap: 'wrap',
         justifyContent: 'center'
+    },
+    agentOption: {
+        display: 'flex',
+        flexDirection: 'column',
+        alignItems: 'center',
+        gap: '8px',
+        padding: '16px 24px',
+        backgroundColor: '#111317',
+        borderRadius: '12px',
+        border: '2px solid #2d333d',
+        cursor: 'pointer',
+        transition: 'all 0.2s ease'
+    },
+    agentOptionLabel: {
+        color: '#fff',
+        fontSize: '14px',
+        fontWeight: '600'
+    },
+    agentOptionDesc: {
+        color: '#6b7280',
+        fontSize: '11px'
     },
     topicInput: {
         width: '100%',
         maxWidth: '500px',
-        padding: '16px 20px',
-        fontSize: '16px',
+        padding: '14px 20px',
+        fontSize: '15px',
         backgroundColor: '#111317',
         border: '1px solid #2d333d',
         borderRadius: '12px',
@@ -551,15 +825,24 @@ const styles = {
         marginBottom: '16px',
         outline: 'none'
     },
+    startButtons: {
+        display: 'flex',
+        gap: '12px',
+        flexWrap: 'wrap',
+        justifyContent: 'center'
+    },
     startButton: {
-        padding: '14px 32px',
-        fontSize: '16px',
+        padding: '12px 24px',
+        fontSize: '15px',
         backgroundColor: '#3b82f6',
         color: '#fff',
         border: 'none',
         borderRadius: '30px',
         cursor: 'pointer',
         fontWeight: '600'
+    },
+    quizStartButton: {
+        backgroundColor: '#f59e0b'
     },
     messageContainer: {
         display: 'flex',
@@ -589,9 +872,16 @@ const styles = {
     },
     messageContent: {
         color: '#fff',
-        fontSize: '15px',
+        fontSize: '14px',
         lineHeight: '1.5',
         whiteSpace: 'pre-wrap'
+    },
+    scoreIndicator: {
+        marginTop: '8px',
+        paddingTop: '8px',
+        borderTop: '1px solid #2d333d',
+        fontSize: '12px',
+        fontWeight: '600'
     },
     timestamp: {
         fontSize: '11px',
@@ -601,18 +891,26 @@ const styles = {
     },
     handoffNotification: {
         display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'center',
-        gap: '8px',
-        padding: '8px 16px',
+        alignItems: 'flex-start',
+        gap: '10px',
+        padding: '12px 16px',
         backgroundColor: '#8b5cf620',
-        borderRadius: '20px',
-        color: '#8b5cf6',
-        fontSize: '13px',
-        alignSelf: 'center'
+        borderRadius: '12px',
+        border: '1px solid #8b5cf640',
+        alignSelf: 'center',
+        maxWidth: '80%'
     },
     handoffIcon: {
-        fontSize: '16px'
+        fontSize: '18px'
+    },
+    handoffContent: {
+        display: 'flex',
+        flexDirection: 'column',
+        gap: '4px'
+    },
+    handoffReason: {
+        color: '#a78bfa',
+        fontSize: '12px'
     },
     errorMessage: {
         padding: '12px 16px',
@@ -634,15 +932,15 @@ const styles = {
         fontStyle: 'italic'
     },
     inputArea: {
-        padding: '16px 20px',
+        padding: '14px 20px',
         borderTop: '1px solid #2d333d',
         display: 'flex',
         gap: '12px'
     },
     messageInput: {
         flex: 1,
-        padding: '14px 20px',
-        fontSize: '15px',
+        padding: '12px 18px',
+        fontSize: '14px',
         backgroundColor: '#111317',
         border: '1px solid #2d333d',
         borderRadius: '30px',
@@ -650,8 +948,8 @@ const styles = {
         outline: 'none'
     },
     sendButton: {
-        padding: '14px 28px',
-        fontSize: '15px',
+        padding: '12px 24px',
+        fontSize: '14px',
         backgroundColor: '#3b82f6',
         color: '#fff',
         border: 'none',
@@ -662,7 +960,7 @@ const styles = {
     sessionInfo: {
         padding: '8px 20px',
         borderTop: '1px solid #2d333d',
-        fontSize: '12px',
+        fontSize: '11px',
         color: '#6b7280',
         textAlign: 'center'
     }
